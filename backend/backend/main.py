@@ -14,7 +14,7 @@ def fetch_prompt(client):
 
 
 def extract_text(response):
-    return response.replace("```", "") 
+    return response.replace("```", "")
 
 
 if __name__ == "__main__":
@@ -27,5 +27,5 @@ if __name__ == "__main__":
     response = fetch_prompt(client=chatgpt_client)
     result = extract_text(response)
 
-    files = generate_files(tts_client = tts_client, config = cfg, csv_text=result)
+    files = generate_files(tts_client=tts_client, config=cfg, csv_text=result)
     print(files)
