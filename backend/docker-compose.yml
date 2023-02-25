@@ -1,0 +1,20 @@
+services:
+  mimic3-server:
+    image: mycroftai/mimic3
+    ports:
+      - "59125:59125"
+    volumes:
+      - ./mimic3/:/home/mimic3/.local/share/mycroft/mimic3
+    networks:
+      - local-network
+    depends_on:
+      - redis-server
+  redis-server:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+      - "8001:8001"
+    networks:
+      - local-network
+networks:
+  local-network: {}
