@@ -9,9 +9,26 @@ class ChatGPTClient:
         )
 
     def generate(self, prompt):
-        response = ""
+        bad_responses = [
+            "As a large language model trained by OpenAI,",
+            "As a language model trained by OpenAI,",
+            "I'm sorry, ",
+            "I apologize",
+        ]
+
+        api_response = None
 
         for data in self.chatbot.ask(prompt, timeout=720):
-            response = data["message"]
+            api_response = data
 
-        return response
+        for bad_response in bad_responses:
+            if bad_response in api_response["message"]:
+                print("bad response, regenerating")
+                for data in self.chatbot.ask(
+                    prompt,
+                    timeout=720,
+                    conversation_id=api_response["conversation_id"],
+                    parent_id=api_response["parent_id"],
+                ):
+                    api_response = data
+        return api_response["message"]

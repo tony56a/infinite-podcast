@@ -12,4 +12,4 @@ class RedisClient:
         if payload == None:
             return
 
-        self.queue.lpush(self.redis_list, str(payload))
+        self.redis_client.lpush(self.redis_list, str(payload))

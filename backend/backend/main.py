@@ -1,6 +1,5 @@
-import yaml
-import re
 import constants
+import json
 
 from redis_client import RedisClient
 from chatgpt_client import ChatGPTClient
@@ -18,8 +17,8 @@ def extract_text(response):
 
 
 if __name__ == "__main__":
-    with open("config.yml", "r") as ymlfile:
-        cfg = yaml.safe_load(ymlfile)
+    with open("config.json", "r") as json_file:
+        cfg = json.loads(json_file.read())
 
     redis_client = RedisClient(config=cfg)
     chatgpt_client = ChatGPTClient(config=cfg)
@@ -27,5 +26,15 @@ if __name__ == "__main__":
     response = fetch_prompt(client=chatgpt_client)
     result = extract_text(response)
 
-    files = generate_files(tts_client=tts_client, config=cfg, csv_text=result)
-    print(files)
+    (animation_sequence, audio_base64, script_metadata) = generate_files(
+        tts_client=tts_client, config=cfg, csv_text=result
+    )
+    redis_client.push(
+        json.dumps(
+            {
+                "animation": animation_sequence,
+                "audio": audio_base64,
+                "guestGender": script_metadata["guest_gender"],
+            }
+        )
+    )
