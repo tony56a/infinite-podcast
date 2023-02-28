@@ -65,8 +65,11 @@ env.bak/
 venv.bak/
 
 config.yml
+config.json
 *.lock
 
 audio/
 
 mimic3/
+
+../renderer/
