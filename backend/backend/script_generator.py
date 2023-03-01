@@ -80,7 +80,10 @@ def build_script_client_calls(config, script_components, tts_client, save_file=F
             or script_component.get("dialogue")
             or script_component.get("transcript")
         )
-        is_host = constants.DEFAULT_NAME.lower() in script_component["name"]
+        is_host = (
+            constants.DEFAULT_NAME.lower() in script_component["name"]
+            or "poe" in script_component["name"]
+        )
         if is_host:
             voice = voices["host"]
         else:
@@ -120,7 +123,10 @@ def generate_animation_file(script_components):
     animation_file = []
 
     for script_component in script_components[:-1]:
-        is_host = "poe reagan".lower() in script_component["name"]
+        is_host = (
+            constants.DEFAULT_NAME.lower() in script_component["name"]
+            or "poe" in script_component["name"]
+        )
         if is_host:
             camera = 1
             character_pose = [1, 0]

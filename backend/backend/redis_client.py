@@ -8,6 +8,9 @@ class RedisClient:
         )
         self.redis_list = config["redis"]["job_queue"]
 
+    def get_length(self):
+        return self.redis_client.llen(self.redis_list)
+
     def push(self, payload):
         if payload == None:
             return
