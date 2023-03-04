@@ -2,10 +2,13 @@ import requests
 import os
 import uuid
 import base64
+import logging
 
 from datetime import datetime
 
 TTS_GENERATION_PATH = "/api/tts"
+
+logger = logging.getLogger()
 
 
 class TTSClient:

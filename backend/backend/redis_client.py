@@ -1,4 +1,7 @@
 import redis
+import logging
+
+logger = logging.getLogger()
 
 
 class RedisClient:
@@ -16,3 +19,21 @@ class RedisClient:
             return
 
         self.redis_client.lpush(self.redis_list, str(payload))
+
+    def add(self, key, payload):
+        if payload == None:
+            return
+
+        self.redis_client.set(key, payload)
+
+    def add(self, key, payload):
+        if payload == None:
+            return
+
+        self.redis_client.set(key, str(payload))
+
+    def get(self, key):
+        return self.redis_client.get(key).decode("utf-8")
+
+    def get_keys(self, search_string):
+        return self.redis_client.scan(0, search_string, count=50)
