@@ -1,6 +1,8 @@
 import logging
 import datetime
 import re
+import openai as openaiAPI
+import constants
 
 from revChatGPT.V1 import Chatbot
 
@@ -34,6 +36,7 @@ class ChatGPTClient:
             {"access_token": config["chatgpt"]["access_token"]},
             conversation_id=config["chatgpt"].get("previous_prompt"),
         )
+        openaiAPI.api_key = config["chatgpt"]["api_access_token"]
 
     def generate(self, prompt):
         bad_responses = [
@@ -66,6 +69,25 @@ class ChatGPTClient:
             logging.warn("resetting convo")
             self.reset_convo()
         return self._trim_response(api_response["message"].lower().strip())
+
+    def generate_real_openapi(self, prompt):
+        completion = openaiAPI.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            temperature=0.8,
+            presence_penalty=0.25,
+            frequency_penalty=0.25,
+            messages=[
+                {
+                    "role": "system",
+                    "content": constants.DEFAULT_API_COMMAND_CONFIG_PROMPT,
+                },
+                {
+                    "role": "user",
+                    "content": prompt,
+                },
+            ],
+        )
+        return completion["choices"][0]["message"]["content"].lower().strip()
 
     def reset_convo(self):
         self.chatbot.conversation_id = None

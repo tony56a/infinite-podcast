@@ -7,6 +7,9 @@ import random
 
 from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime
+from revChatGPT.V1 import Error
+from openai import error
+
 
 from redis_client import RedisClient
 from chatgpt_client import ChatGPTClient
@@ -27,7 +30,6 @@ rotating_file_handler.setFormatter(formatter)
 logger.addHandler(rotating_file_handler)
 logger.setLevel(logging.INFO)
 
-VALID_SCRIPT_TYPES = ["normal", "robot", "skeleton"]
 parser = argparse.ArgumentParser(description="Generates podcast scripts")
 parser.add_argument(
     "--infinite", help="Keeps generating scripts non-stop", action="store_true"
@@ -36,16 +38,16 @@ parser.add_argument("--request", help="Grabs the request", action="store_true")
 parser.add_argument(
     "--type",
     help="Generate a specifc type of script, only applicable in default mode",
-    choices=VALID_SCRIPT_TYPES,
+    choices=constants.VALID_SCRIPT_TYPES,
     type=str.lower,
     default="normal",
     required=False,
 )
 
 
-def fetch_prompt(client, script_type, script_prompt):
+def fetch_prompt(client, script_type, script_prompt, script_requester):
     prompt_customizations = {
-        "normal": ("character", ""),
+        "normal": ("human character", ""),
         "robot": ("robot", " and unrelated to robots, but referencing robots somehow"),
         "skeleton": (
             "skeleton",
@@ -59,7 +61,23 @@ def fetch_prompt(client, script_type, script_prompt):
         character_type=prompt_customization[0],
         character_addenda=prompt_customization[1],
     )
-    return client.generate(prompt)
+
+    response = None
+    if script_requester:
+        # If this is a manual request, then get an entry from the real API first
+        try:
+            api_prompt = constants.DEFAULT_API_PROMPT_TEMPLATE.format(
+                host_name=constants.DEFAULT_NAME,
+                script_prompt=script_prompt,
+                character_type=prompt_customization[0],
+                character_addenda=prompt_customization[1],
+            )
+            logger.info(f"Generating direct OpenAI script for {api_prompt}")
+            response = client.generate_real_openapi(api_prompt)
+        except e:
+            logger.error(f"direct OpenAI generation failed due to {e}")
+
+    return response or client.generate(prompt)
 
 
 def extract_text(response):
@@ -71,12 +89,16 @@ def do_generate_script(
     chatgpt_client,
     tts_client,
     script_type="normal",
-    script_prompt="a random appropriate topic dissimilar from the previous one",
+    script_prompt="a ridiculous and absurd random topic completely unlike the previous one",
     script_requester=None,
 ):
     global redis_script_key_counter
+
     response = fetch_prompt(
-        client=chatgpt_client, script_type=script_type, script_prompt=script_prompt
+        client=chatgpt_client,
+        script_type=script_type,
+        script_prompt=script_prompt,
+        script_requester=script_requester,
     )
     result = extract_text(response)
     (animation_sequence, audio_base64, script_metadata) = generate_files(
@@ -95,6 +117,9 @@ def do_generate_script(
     )
 
     if script_requester:
+        # If there's a requester, then we need to publish the result to twitch,
+        # and push into requested queue instead of the normal queue
+        # todo: push into requested queue instead of frontloading normal queue
         redis_client.priority_push(payload)
         request_response_payload = {
             "name": script_requester,
@@ -115,6 +140,17 @@ def do_generate_script(
         redis_script_key_counter = 0
 
 
+def do_push_backup_script(script_length, redis_client):
+    if script_length < 10:
+        # If errored out and scripts are running low, pull a random backup script and load it
+        keys = redis_client.get_keys(f"{REDIS_SCRIPT_KEY_PREFIX}*")[1]
+        key = random.choice(keys)
+        redis_client.push(redis_client.get(key))
+        # Since this takes less time then chatGPT, sleep for a bit longer so we don't buffer too many
+        # backups
+        time.sleep(10)
+
+
 if __name__ == "__main__":
     with open("config.json", "r") as json_file:
         cfg = json.loads(json_file.read())
@@ -129,20 +165,21 @@ if __name__ == "__main__":
             script_length = redis_client.get_length()
 
             request = redis_client.get_queue_content(redis_client.script_request_queue)
+            if not request and script_length > 60:
+                logger.info("too many queued scripts already, skipping")
+                time.sleep(50)
+                continue
             try:
                 if request:
                     request = json.loads(request)
                     script_prompt = request["prompt"]
                     script_type = request["type"]
                     script_requester = request["name"]
-                else:
-                    if script_length > 60:
-                        logger.info("too many queued scripts already, skipping")
-                        time.sleep(50)
-                        continue
-                    script_prompt = (
-                        "a random appropriate topic dissimilar from the previous one"
+                    logger.info(
+                        f"Generating requested {script_type} script with prompt {script_prompt}"
                     )
+                else:
+                    script_prompt = "a ridiculous and absurd random topic completely unlike the previous one"
                     script_type = "normal"
                     script_requester = None
                     script_random_key_val = random.randint(0, 10)
@@ -163,8 +200,25 @@ if __name__ == "__main__":
                     f"completed generation of script",
                     extra={"timestamp": datetime.now()},
                 )
+            except Error as chatgpt_error:
+                # Todo: Use internal error class here
+                logger.error(f"generation failed due to ChatGPT error {chatgpt_error}")
+                if request:
+                    request_response_payload = {
+                        "name": script_requester,
+                        "prompt": script_prompt,
+                        "success": False,
+                        "error": e.code,
+                    }
+                    redis_client.push(
+                        json.dumps(request_response_payload),
+                        redis_client.script_request_response_queue,
+                    )
+                do_push_backup_script(
+                    script_length=script_length, redis_client=redis_client
+                )
             except Exception as e:
-                logger.error(f"generation failed due to {e}")
+                logger.error(f"generation failed due to unknown error {e}")
                 if request:
                     request_response_payload = {
                         "name": script_requester,
@@ -175,17 +229,10 @@ if __name__ == "__main__":
                         json.dumps(request_response_payload),
                         redis_client.script_request_response_queue,
                     )
-
-                if script_length < 10:
-                    # If errored out and scripts are running low, pull a random backup script and load it
-                    keys = redis_client.get_keys(f"{REDIS_SCRIPT_KEY_PREFIX}*")[1]
-                    key = random.choice(keys)
-                    redis_client.push(redis_client.get(key))
-                    # Since this takes less time then chatGPT, sleep for a bit longer so we don't buffer too many
-                    # backups
-                    time.sleep(10)
-
-            time.sleep(50)
+                do_push_backup_script(
+                    script_length=script_length, redis_client=redis_client
+                )
+            time.sleep(30)
     elif args.request:
         request = redis_client.get_queue_content(redis_client.script_request_queue)
         if not request:

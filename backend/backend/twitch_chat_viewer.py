@@ -1,14 +1,18 @@
+import constants
+
 from twitchAPI import Twitch
 from twitchAPI.oauth import UserAuthenticator
 from twitchAPI.types import AuthScope, ChatEvent
 from twitchAPI.chat import Chat, EventData, ChatCommand
 from redis_client import RedisClient
 from logging.handlers import TimedRotatingFileHandler
+from ratelimit import limits, RateLimitException
 
 import json
 import logging
 import time
 import asyncio
+import random
 
 USER_SCOPE = [AuthScope.CHAT_READ, AuthScope.CHAT_EDIT]
 TARGET_CHANNEL = "podcastsforever"
@@ -35,6 +39,11 @@ async def on_ready(ready_event: EventData):
     # you can do other bot initialization things in here
 
 
+@limits(calls=1, period=20)
+def check_api_limit():
+    return
+
+
 # this will be called whenever the !reply command is issued
 async def generate_script_request(cmd: ChatCommand):
     global redis_client
@@ -42,25 +51,34 @@ async def generate_script_request(cmd: ChatCommand):
     if len(cmd.parameter) == 0:
         logger.error("No params available")
         return
-    else:
-        if not cmd.user.mod and cmd.user.name.lower() not in approved_users:
-            logger.warning("Not a mod, cannot run")
-            await cmd.reply(f"Sorry {cmd.user.name}, but you can't queue scripts")
-        else:
-            commands = cmd.parameter.split(" ")
-            type = commands[0].lower()
-            prompt = " ".join(commands[1:]).strip()
-            payload = {
-                "name": cmd.user.name,
-                "type": type,
-                "prompt": prompt,
-            }
-            redis_client.push(
-                payload=json.dumps(payload), queue=redis_client.script_request_queue
-            )
-            await cmd.reply(
-                f'OK {cmd.user.name}, queuing up a {type} script with the prompt "{prompt}"'
-            )
+
+    commands = cmd.parameter.split(" ")
+    type = commands[0].lower()
+    prompt = " ".join(commands[1:]).strip() or "a ridiculous and absurd random topic"
+
+    # TODO: extract validation to seperate function
+    if type not in constants.VALID_SCRIPT_TYPES:
+        prompt = " ".join(commands).strip()
+        type = random.choice(constants.VALID_SCRIPT_TYPES)
+
+    if not cmd.user.mod and cmd.user.name.lower() not in approved_users:
+        try:
+            check_api_limit()
+        except RateLimitException as e:
+            await cmd.reply(f"Sorry {cmd.user.name}, try again later")
+            return
+
+    payload = {
+        "name": cmd.user.name,
+        "type": type,
+        "prompt": prompt,
+    }
+    redis_client.push(
+        payload=json.dumps(payload), queue=redis_client.script_request_queue
+    )
+    await cmd.reply(
+        f'OK {cmd.user.name}, queuing up a {type} script with the prompt "{prompt}"'
+    )
 
 
 async def run():
@@ -98,9 +116,20 @@ async def run():
             if raw_response_payload:
                 response_payload = json.loads(raw_response_payload)
                 logger.info(response_payload)
+                if response_payload["success"]:
+                    status_string = "successful!"
+                else:
+                    # Later revisions has an enum, but access has changed substantially for the worse
+                    if (
+                        response_payload.get("error") == 2
+                        or response_payload.get("error") == 429
+                    ):
+                        status_string = "unsuccessful because we're in rerun mode ATM, try again later :("
+                    else:
+                        status_string = "unsuccessful :("
                 await chat.send_message(
                     TARGET_CHANNEL,
-                    f"{response_payload['name']}, Prompt: \"{response_payload['prompt']}\" was {'successful!' if response_payload['success'] else 'not successful :('}",
+                    f"{response_payload['name']}, Prompt: \"{response_payload['prompt']}\" was {status_string}",
                 )
             time.sleep(5)
     finally:

@@ -99,6 +99,17 @@ def generate_files(tts_client, config, csv_text, script_type):
     logger.info(
         f"Generating script for the following: {script_type} \n{csv_text} \n{script_components}"
     )
+    script_components = [
+        line
+        for line in script_components
+        if line.get("name") != None
+        and line.get("gender") != None
+        and (
+            line.get("dialogue") != None
+            or line.get("transcript") != None
+            or line.get("text") != None
+        )
+    ]
 
     tm1 = time.perf_counter()
     audio_base64 = []
