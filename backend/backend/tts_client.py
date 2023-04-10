@@ -22,13 +22,17 @@ class TTSClient:
         save_file=False,
         voice="en_US/cmu-arctic_low#jmk",
         name="",
+        speed=1.1,
     ):
+        # Replace hyphens with periods(will render as pause)
+        text = text.replace(" - ", " . ").replace("...", ".")
+
         # for SSML, stick a default voice (without it, it'll jump around for some reason)
         # for regular situations, set the length scale to 85%
         params = {
             "voice": f"{voice}",
             "ssml": 1 if ssml else 0,
-            "lengthScale": 1.1 if ssml else 1.18,
+            "lengthScale": speed,
         }
         response = requests.post(
             self.url + TTS_GENERATION_PATH, params=params, data=text

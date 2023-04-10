@@ -1,21 +1,32 @@
 import logging
-import datetime
 import re
 import openai as openaiAPI
 import constants
+import csv
+import unidecode
 
-from revChatGPT.V1 import Chatbot
+from better_profanity import profanity
+from retry import retry
+from io import StringIO
+from poe import (
+    load_chat_id_map,
+    clear_context,
+    send_message,
+    get_latest_message,
+    set_auth,
+)
 
 logger = logging.getLogger()
 
 
 class ChatGPTClient:
     def _trim_response(self, response):
+        logger.info(f"raw chatgpt response: {response}")
         beginning_regex = r"^(.*)```.*\"?\s*name\s*\"?,\s*\"?gender\s*\"?,"
         end_regex = r"```(.*)$"
         front_trimmed_response = re.sub(
             beginning_regex,
-            "Name,Gender,",
+            "Name|Gender|",
             response,
             1,
             re.DOTALL | re.MULTILINE | re.IGNORECASE,
@@ -27,68 +38,129 @@ class ChatGPTClient:
             1,
             re.DOTALL | re.MULTILINE | re.IGNORECASE,
         )
-        return back_trimmed_response
+        split_lines = [
+            line for line in back_trimmed_response.split("\n") if line.strip() != ""
+        ]
+        title_line = split_lines[0].lower()
+        if "gender" not in title_line or "name" not in title_line:
+            split_lines = ["name|gender|text"] + split_lines
+        # we can't trust chatGPT output here, so replace entirely
+        split_lines[0] = "name|gender|text"
 
-    def __init__(self, config):
-        self.request_count = 0
-        self.previous_convo_id = config["chatgpt"].get("previous_prompt")
-        self.chatbot = Chatbot(
-            {"access_token": config["chatgpt"]["access_token"]},
-            conversation_id=config["chatgpt"].get("previous_prompt"),
-        )
-        openaiAPI.api_key = config["chatgpt"]["api_access_token"]
+        updated_lines = []
+        build_up_line = ""
+        for line in split_lines:
+            if not line:
+                continue
+            if line.count("|") == 2:
+                if build_up_line:
+                    updated_lines.append(build_up_line)
+                build_up_line = line
+            else:
+                build_up_line += f" {line}"
+        if build_up_line:
+            updated_lines.append(build_up_line)
 
-    def generate(self, prompt):
-        bad_responses = [
-            "As a large language model trained by OpenAI,",
-            "As a language model trained by OpenAI,",
-            "I'm sorry, ",
-            "I apologize",
+        split_lines = [
+            line
+            for line in updated_lines
+            if line.count("|") >= 2 and line.count("-|") < 2
         ]
 
+        newline_trimmed_response = (
+            "\n".join(split_lines).replace("\\n", "\n").replace("\\t", "\t")
+        )
+
+        f = StringIO(unidecode.unidecode(newline_trimmed_response))
+        reader = csv.DictReader(
+            f, delimiter="|", skipinitialspace=True, quoting=csv.QUOTE_NONE
+        )
+        script_components = [line for line in reader]
+        if len(script_components) <= 0:
+            raise RuntimeError("script components will be empty")
+
+        return newline_trimmed_response
+
+    def __init__(self, config, should_reset=True):
+        profanity.load_censor_words()
+        self.request_count = 0
+        self.previous_convo_id = config["chatgpt"].get("previous_prompt")
+
+        set_auth("Quora-Formkey", config["poe"]["form_key"])
+        set_auth("Cookie", config["poe"]["cookie"])
+
+        openaiAPI.api_key = config["chatgpt"]["api_access_token"]
+        self.bot = "chinchilla"
+        self.chat_id = load_chat_id_map(self.bot)
+        if should_reset:
+            self.reset_convo()
+
+    def generate(self, prompt):
+        logger.info(f"submitting the following prompt: {prompt}")
         api_response = None
 
-        for data in self.chatbot.ask(prompt, timeout=360):
-            api_response = data
+        send_message(prompt, self.bot, self.chat_id)
+        api_response = get_latest_message(self.bot)
 
-        parsed_response = self._trim_response(api_response["message"].lower().strip())
-
-        for bad_response in bad_responses:
-            if bad_response in parsed_response:
-                logging.warn("bad response, regenerating")
-                for data in self.chatbot.ask(
-                    prompt,
-                    timeout=360,
-                    conversation_id=api_response["conversation_id"],
-                    parent_id=api_response["parent_id"],
-                ):
-                    api_response = data
+        parsed_response = None
+        try:
+            parsed_response = self._trim_response(api_response.strip())
+        except Exception:
+            logging.exception("error whilst processing output, resetting")
+            self.reset_convo()
 
         self.request_count += 1
-        if self.request_count % 50 == 0:
+        if self.request_count % 5 == 0:
             logging.warn("resetting convo")
             self.reset_convo()
-        return self._trim_response(api_response["message"].lower().strip())
 
-    def generate_real_openapi(self, prompt):
-        completion = openaiAPI.ChatCompletion.create(
-            model="gpt-3.5-turbo",
-            temperature=0.8,
-            presence_penalty=0.25,
-            frequency_penalty=0.25,
-            messages=[
+        return parsed_response
+
+    @retry(RuntimeError, tries=3, delay=2)
+    def generate_real_openapi(self, prompt, insert_system_prompt=False):
+        request = []
+        if insert_system_prompt:
+            request.append(
                 {
                     "role": "system",
                     "content": constants.DEFAULT_API_COMMAND_CONFIG_PROMPT,
-                },
+                }
+            )
+        if type(prompt) is list:
+            for prompt_str in prompt:
+                request.append(
+                    {
+                        "role": "user",
+                        "content": prompt_str,
+                    }
+                )
+        else:
+            request.append(
                 {
                     "role": "user",
                     "content": prompt,
-                },
-            ],
+                }
+            )
+        completion = openaiAPI.ChatCompletion.create(
+            model="gpt-4",
+            temperature=0.8,
+            presence_penalty=0,
+            frequency_penalty=0.6,
+            messages=request,
+            request_timeout=150,
         )
-        return completion["choices"][0]["message"]["content"].lower().strip()
+        raw_response = self._trim_response(
+            completion["choices"][0]["message"]["content"].strip()
+        )
+
+        return profanity.censor(
+            raw_response.replace('"', "~").replace("'", "~"), "A"
+        ).replace("~", "'")
+
+    def moderate(self, prompt):
+        result = openaiAPI.Moderation.create(input=prompt)
+        return result["results"][0]
 
     def reset_convo(self):
-        self.chatbot.conversation_id = None
-        self.chatbot.parent_id = None
+        if self.chat_id:
+            clear_context(self.chat_id)

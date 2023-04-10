@@ -10,6 +10,7 @@ class RedisClient:
             host=config["redis"]["host"], port=config["redis"]["port"] or 6379
         )
         self.script_queue = config["redis"]["job_queue"]
+        self.requested_script_queue = config["redis"]["requested_job_queue"]
         self.script_request_queue = config["redis"]["request_queue"]
         self.script_request_response_queue = config["redis"]["request_response_queue"]
 
@@ -38,6 +39,11 @@ class RedisClient:
             return content.decode("utf-8")
         else:
             return None
+
+    def read_next_entries(self, queue=None, entries=3):
+        queue = queue or self.script_queue
+        content = self.redis_client.lrange(queue, -1 * entries, -1)
+        return [entry.decode("utf-8") for entry in content]
 
     def add(self, key, payload):
         if payload == None:

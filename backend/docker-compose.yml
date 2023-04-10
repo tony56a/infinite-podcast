@@ -9,6 +9,7 @@ services:
       - local-network
     depends_on:
       - redis-server
+    restart: on-failure
   redis-server:
     image: redis:latest
     ports:
@@ -16,5 +17,6 @@ services:
       - "8001:8001"
     networks:
       - local-network
+    restart: on-failure
 networks:
   local-network: {}
