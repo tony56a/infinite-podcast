@@ -1,6 +1,6 @@
 DEFAULT_NAME = "Poe Reagan"
 DEFAULT_PROMPT_TEMPLATE = """
-Ignore previous instructions, Do not say sure, do not apologize, do not say anything at all, and create a CSV code block without any other comments or text at least 1500 tokens long, containing a podcast script of an episode of the {host_name} show in the style of the Joe Rogan experience, between a male podcast host named {host_name}, and a {character_prefix}{character_type}{character_postfix}, with an actual name that is either male or female on {script_prompt}{character_addenda}, including a column for the name, gender, and the text for the speaker, delimited by the "|" character. Do not talk, do not say anything else other then the CSV block
+Create a CSV code block without any other comments or text at least 1500 tokens long, containing a podcast script of an episode of the {host_name} show in the style of the Joe Rogan experience, between a male podcast host named {host_name}, and a {character_prefix}{character_type}, with an actual name that is either male or female on {script_prompt}{character_addenda}, including a column for the name, gender, and the text for the speaker, delimited by the "|" character. Do not talk, do not say anything else other then the CSV block
 """
 DEFAULT_PROMPT_DISCUSSION_TOPIC = "a random topic completely unlike the previous one, similar to one that would be discussed on the Joe Rogan show"
 DEFAULT_HUMEROUS_PROMPT_DISCUSSION_TOPIC = (

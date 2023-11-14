@@ -7,7 +7,6 @@ import random
 
 from logging.handlers import TimedRotatingFileHandler
 from datetime import datetime
-from openai import error
 
 from redis_client import RedisClient
 from chatgpt_client import ChatGPTClient
@@ -52,6 +51,11 @@ parser.add_argument(
     type=str.lower,
     default="normal",
     required=False,
+)
+parser.add_argument(
+    "--force-local",
+    help="Only in conjunction with test request, will force the use of the local LLM instance",
+    action="store_true",
 )
 
 
@@ -251,7 +255,7 @@ if __name__ == "__main__":
     elif args.test_request:
         script_prompt = args.test_request
         script_type = args.type
-        script_requester = "test"
+        script_requester = None if args.force_local else "test"
         do_generate_script(
             cfg,
             chatgpt_client,
